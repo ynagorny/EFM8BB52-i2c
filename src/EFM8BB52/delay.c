@@ -5,8 +5,8 @@
 #define ONE_STEP_DELAY_NS (1000000000 / (SYSCLK_FREQUENCY / 12))
 #define MAX_STEP_DELAY_US (65535 * ONE_STEP_DELAY_NS / 1000)
 
-void delay_step_us(unsigned long microseconds) {
-  unsigned int start_at;
+void delay_step_us(u32 microseconds) {
+  u16 start_at;
 
   if (microseconds == 0) {
       return;
@@ -44,7 +44,7 @@ void delay_step_us(unsigned long microseconds) {
   SFRPAGE = 0x00;
 }
 
-void delay_us(unsigned long microseconds) {
+void delay_us(u32 microseconds) {
   while (microseconds > MAX_STEP_DELAY_US) {
       delay_step_us(MAX_STEP_DELAY_US);
       microseconds -= MAX_STEP_DELAY_US;
@@ -53,13 +53,13 @@ void delay_us(unsigned long microseconds) {
   delay_step_us(microseconds);
 }
 
-void delay_ms(unsigned int milliseconds) {
-  unsigned long microseconds = ((unsigned long) milliseconds) * 1000;
+void delay_ms(u16 milliseconds) {
+  unsigned long microseconds = ((u32) milliseconds) * 1000;
   delay_us(microseconds);
 }
 
-void delay(unsigned int seconds) {
-  unsigned long microseconds = ((unsigned long) seconds) * 1000000;
+void delay(u16 seconds) {
+  unsigned long microseconds = ((u32) seconds) * 1000000;
   delay_us(microseconds);
 }
 
