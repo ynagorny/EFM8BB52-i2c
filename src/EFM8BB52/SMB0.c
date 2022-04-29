@@ -3,21 +3,67 @@
 
 #define SMB0_REG_BANK 1
 
+#define SMB0_TX_BUFFER_SIZE 16
+#define SMB0_RX_BUFFER_SIZE 16
+
 /*** Private ***/
 
-bit _SMB0_busy;
-bit _SMB0_success;
+SMB_state data _SMB0_state = SMB_unconfigured;
 
 byte data _SMB0_address;
+SMB_direction data _SMB0_direction;
 
-byte data* _SMB0_tx;
-byte data  _SMB0_tx_remains;
+byte data _SMB0_tx[SMB0_TX_BUFFER_SIZE];
+u8 data _SMB0_tx_read_at = 0;
+u8 data _SMB0_tx_write_at = 0;
 
-byte data* _SMB0_rx;
-byte data  _SMB0_rx_remains;
-byte data* _SMB0_rx_size;
+byte data _SMB0_rx[SMB0_RX_BUFFER_SIZE];
+u8 data _SMB0_rx_read_at = 0;
+u8 data _SMB0_rx_write_at = 0;
+u8 data _SMB0_rx_max_write_at = 0;
 
-void SMB0_timer2_config(void) {
+void SMB0_reset_tx_buffer(void) {
+  _SMB0_tx_read_at = 0;
+  _SMB0_tx_write_at = 0;
+}
+
+void SMB0_reset_rx_buffer(void) {
+  _SMB0_rx_read_at = 0;
+  _SMB0_rx_write_at = 0;
+}
+
+void SMB0_reset_buffers(void) {
+  SMB0_reset_tx_buffer();
+  SMB0_reset_rx_buffer();
+}
+
+bool SMB0_has_data_to_tx(void) {
+  return _SMB0_tx_read_at < _SMB0_tx_write_at;
+}
+
+byte SMB0_get_next_byte_to_send(void) {
+  if (_SMB0_tx_read_at < _SMB0_tx_write_at) {
+    byte d = _SMB0_tx[_SMB0_tx_read_at++];
+    if (_SMB0_tx_read_at == _SMB0_tx_write_at) {
+        _SMB0_tx_read_at = _SMB0_tx_write_at = 0;
+    }
+    return d;
+  } else {
+    return 0x00;
+  }
+}
+
+bool SMB0_need_to_receive_more() {
+  return _SMB0_rx_write_at < _SMB0_rx_max_write_at;
+}
+
+void SMB0_receive_byte(byte d) {
+  if (_SMB0_rx_write_at < _SMB0_rx_max_write_at) {
+      _SMB0_rx[_SMB0_rx_write_at++] = d;
+  }
+}
+
+void SMB0_timer2_config_and_start(void) {
   TMR2CN0_T2SPLIT = 1;
 
   // Use SYSCLK as the clock source for low part of Timer2
@@ -40,8 +86,10 @@ void SMB0_control_config(void) {
 }
 
 void SMB0_config(void) {
-  SMB0_timer2_config();
+  SMB0_timer2_config_and_start();
   SMB0_control_config();
+
+  _SMB0_state = SMB_configured;
 }
 
 void SMB0_enable(void) {
@@ -49,8 +97,7 @@ void SMB0_enable(void) {
   EIE1 |= EIE1_ESMB0__ENABLED;
   SMB0CF |= SMB0CF_ENSMB__ENABLED;
 
-  _SMB0_success = 1;
-  _SMB0_busy = 0;
+  _SMB0_state = SMB_idle;
 }
 
 void SMB0_disable(void) {
@@ -59,39 +106,13 @@ void SMB0_disable(void) {
   EIE1 &= ~EIE1_ESMB0__BMASK;
   SMB0CN0 = 0x00;
 
-  _SMB0_success = 0;
-  _SMB0_busy = 0;
-}
+  SMB0_reset_buffers();
 
-void SMB0_reset(void) {
-  SMB0_disable();
-  SMB0_enable();
-}
-
-void SMB0_complete_and_reset(void) {
-  if (! SMB0_complete()) {
-      SMB0_reset();
-  }
+  _SMB0_state = SMB_configured;
 }
 
 void SMB0_setup_address(byte address) {
   _SMB0_address = address;
-}
-
-void SMB0_setup_tx(byte data* tx, byte tx_size) {
-  _SMB0_tx = tx;
-  _SMB0_tx_remains = tx_size;
-}
-
-void SMB0_setup_rx(byte data* rx, byte max_rx_size, byte data* rx_size) {
-  _SMB0_rx = rx;
-  _SMB0_rx_remains = max_rx_size;
-  *(_SMB0_rx_size = rx_size) = 0;
-}
-
-void SMB0_start(void) {
-  SMB0CN0_STA = 1;
-  _SMB0_busy = 1;
 }
 
 SI_INTERRUPT_USING(SMB0_ISR, SMBUS0_IRQn, SMB0_REG_BANK) {
@@ -99,65 +120,124 @@ SI_INTERRUPT_USING(SMB0_ISR, SMBUS0_IRQn, SMB0_REG_BANK) {
 
   switch (SMB0CN0 & (SMB0CN0_MASTER__BMASK | SMB0CN0_TXMODE__BMASK | SMB0CN0_STA__BMASK | SMB0CN0_STO__BMASK)) {
     case SMB0CN0_MASTER__MASTER | SMB0CN0_TXMODE__TRANSMITTER | SMB0CN0_STA__SET:
-      SMB0CN0_STA = 0;
-      SMB0CN0_STO = 0;
-      SMB0DAT = (_SMB0_address << 1) + (_SMB0_tx_remains > 0 ? 0 : 1);
-      break;
-
-    case SMB0CN0_MASTER__MASTER | SMB0CN0_TXMODE__TRANSMITTER:
-      if (SMB0CN0_ACK) {
-          if (_SMB0_tx_remains) {
-              SMB0DAT = *_SMB0_tx++;
-              _SMB0_tx_remains--;
-          } else {
-              SMB0CN0_STO = 1;
-              _SMB0_success = 1;
-              _SMB0_busy = 0;
-          }
+      if (_SMB0_state == SMB_leader_starting) {
+        bool write = _SMB0_direction == SMB_write || _SMB0_direction == SMB_write_then_read;
+        SMB0CN0_STA = 0;
+        SMB0CN0_STO = 0;
+        SMB0DAT = (_SMB0_address << 1) | (write ? 0 : 1);
+        _SMB0_state = write ? SMB_leader_sending : SMB_leader_receiving;
       } else {
-          SMB0CN0_STO = 1;
-          _SMB0_success = (_SMB0_tx_remains == 0);
-          _SMB0_busy = 0;
+        SMB0_reset();
       }
       break;
 
+    case SMB0CN0_MASTER__MASTER | SMB0CN0_TXMODE__TRANSMITTER:
+      if (_SMB0_state == SMB_leader_sending) {
+        if (SMB0CN0_ACK && SMB0_has_data_to_tx()) {
+          SMB0DAT = SMB0_get_next_byte_to_send();
+        } else {
+          if (_SMB0_direction == SMB_write_then_read) {
+            SMB0CN0_STA = 1;
+
+            _SMB0_direction = SMB_read;
+            _SMB0_state = SMB_leader_starting;
+          } else {
+            SMB0CN0_STO = 1;
+            _SMB0_state = SMB_idle;
+          }
+        }
+      } else if (_SMB0_state == SMB_leader_receiving) {
+        if (SMB0CN0_ACK) {
+          if (SMB0_need_to_receive_more()) {
+            SMB0CN0_ACK = 1;
+          } else {
+            SMB0CN0_ACK = 0;
+          }
+        } else {
+          SMB0CN0_STO = 1;
+          _SMB0_state = SMB_idle;
+        }
+      } else {
+        SMB0_reset();
+      }
+      break;
+
+  case SMB0CN0_MASTER__MASTER | SMB0CN0_TXMODE__RECEIVER:
+    if (_SMB0_state == SMB_leader_receiving) {
+      SMB0_receive_byte(SMB0DAT);
+
+      if (SMB0_need_to_receive_more()) {
+        SMB0CN0_ACK = 1;
+      } else {
+        SMB0CN0_STO = 1;
+        _SMB0_state = SMB_idle;
+      }
+    } else {
+      SMB0_reset();
+    }
+    break;
+
     default:
       SMB0_reset();
-      _SMB0_success = 0;
-      _SMB0_busy = 0;
   }
 
   SMB0CN0_SI = 0;
 }
 
+void SMB0_wait_for_state(SMB_state state) {
+  while (_SMB0_state != state) { }
+}
+
 /*** Public ***/
 
 void SMB0_configure(void) {
+  if (_SMB0_state != SMB_unconfigured) return;
+
 #if SMB0_ENABLED == 1
   SMB0_config();
   SMB0_enable();
 #endif
 }
 
-bool SMB0_busy(void) {
-  return _SMB0_busy;
+void SMB0_reset(void) {
+  SMB0_disable();
+  SMB0_enable();
 }
 
-bool SMB0_success(void) {
-  return _SMB0_success;
+void SMB0_start(byte to_address, SMB_direction direction, u8 receive_count) {
+  SMB0_wait_for_state(SMB_idle);
+
+  _SMB0_address = to_address;
+  _SMB0_direction = direction;
+  _SMB0_rx_max_write_at = receive_count;
+
+  SMB0_reset_buffers();
+
+  _SMB0_state = SMB_leader_starting;
+
+  SMB0CN0_STA = 1;
 }
 
-bool SMB0_complete(void) {
-  while(SMB0_busy()) {}
-  return SMB0_success();
+void SMB0_start_write(byte to_address) {
+  SMB0_start(to_address, SMB_write, 0);
 }
 
-void SMB0_transfer(byte address, byte data* request, byte request_size, byte data* response, byte max_response_size, byte data* response_size) {
-  SMB0_complete_and_reset();
-
-  SMB0_setup_address(address);
-  SMB0_setup_tx(request, request_size);
-  SMB0_setup_rx(response, max_response_size, response_size);
-
-  SMB0_start();
+void SMB0_start_read(byte from_address, u8 receive_count) {
+  SMB0_start(from_address, SMB_read, receive_count);
 }
+
+void SMB0_start_write_then_read(byte address, u8 receive_count) {
+  SMB0_start(address, SMB_write_then_read, receive_count);
+}
+
+
+void SMB0_stop(void) {
+  SMB0_wait_for_state(SMB_idle);
+}
+
+void SMB0_write(byte d) {
+  while (_SMB0_tx_write_at >= SMB0_TX_BUFFER_SIZE) { }
+  _SMB0_tx[_SMB0_tx_write_at++] = d;
+}
+
+

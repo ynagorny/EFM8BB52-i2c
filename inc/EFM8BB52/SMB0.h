@@ -5,22 +5,93 @@
 
 #include <settings.h>
 
+typedef enum {
+  SMB_write = 1,
+  SMB_read  = 2,
+  SMB_write_then_read = 3,
+} SMB_direction;
+
+typedef enum {
+  SMB_unconfigured =  0,
+  SMB_configured,
+  SMB_idle,
+  SMB_leader_starting,
+  SMB_leader_sending,
+  SMB_leader_receiving,
+} SMB_state;
+
+// return true if we should acknowledge to the address with specified direction
+typedef bool (*SMB_follower_acknowledge_callback)(byte address, SMB_direction direction);
+
+// called when no more data available to send; call SMB0_write() to provide data
+typedef void (*SMB_out_of_data_to_send)(void);
+
+// return true if it should be acknowledged; call SMB0_read() to get the data
+typedef bool (*SMB_receive_acknowledge_callback)();
+
+
+/*** Configuration ***/
+
+// if not specified or NULL, all addresses matching the mask in SMB0_follow() will be automatically acknowledged
+void SMB0_SetFollowerAcknowledgeCallback(SMB_follower_acknowledge_callback callback);
+
+// if not specified or NULL, it will be skipped
+void SMB0_SetOutOfDataToSendCallback(SMB_out_of_data_to_send callback);
+
+// if not specified or NULL, all bytes will be acknowledged
+void SMB0_SetReceiveAcknowledgeCallback(SMB_receive_acknowledge_callback callback);
+
+// call to configure SMB0
 void SMB0_configure(void);
 
-// TRUE if another transfer is in progress
-bool SMB0_busy(void);
+// stop all transmissions immediately and reset
+void SMB0_reset();
 
-// TRUE if the last transfer was a success
-// returns FALSE if SMB0 is busy
-bool SMB0_success(void);
+/*** COMMON ***/
 
-// waits for SMB0 to complete last transfer and returns SMB0_success()
-bool SMB0_complete(void);
+SMB_state SMB0_get_state(void);
 
-// sends request to follower, receives response
-// if nothing to send, supply NULL request and request_size == 0
-// if nothing to receive, supply NULL response and response_size == 0
-// if another transfer is in progress, it will wait
-void SMB0_transfer(byte to_address, byte data * request, byte request_size, byte data* response, byte max_response_size, byte data* response_size);
+/*** LEADER ***/
+
+// call to start or restart transfer
+// on every byte received SMB_acknowledge_received_callback will be called if set
+void SMB0_start(byte to_address, SMB_direction direction, u8 receive_count);
+void SMB0_start_write(byte to_address);
+void SMB0_start_read(byte from_address, u8 receive_count);
+void SMB0_start_write_then_read(byte address, u8 receive_count);
+
+// it will wait for all data to be sent or all data to be received and then stop
+void SMB0_stop();
+
+/*** FOLOWER ***/
+
+// allow to be a follower on the address with the mask
+// when a matching contact occurs, SMB_follower_acknowledge_callback will be called if set
+// on every byte received SMB_acknowledge_received_callback will be called if set
+// if read buffer is not empty, automatic not acknowledged will be set, call SMB0_read_reset()
+void SMB0_follow(byte address, byte mask);
+
+// disable follower mode
+void SMB0_unfollow(void);
+
+/*** WRITING ***/
+
+// returns how many bytes can be accepted for writing
+u8 SMB0_write_room(void);
+
+// add to send buffer, if buffer is full, it will wait
+void SMB0_write(byte d);
+
+/*** READING ***/
+
+// returns number of bytes available to read
+u8 SMB0_received(void);
+
+// call to read next received byte of data; it will block if no data is available
+byte SMB0_read(void);
+
+// call to reset read buffer
+void SMB0_read_reset(void);
+
 
 #endif
