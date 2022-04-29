@@ -3,6 +3,7 @@
 
 #include "types.h"
 
+#include "delay.h"
 #include "MCU.h"
 #include "pins.h"
 #include "SMB0.h"

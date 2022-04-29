@@ -4,8 +4,6 @@
 #include <EFM8BB52/UART0.h>
 
 void UART0_enable(void) {
-  SFRPAGE = 0x00;
-
   // route UART0 pins via crossbar
   XBR0 |= XBR0_URT0E__ENABLED;
 
@@ -37,8 +35,6 @@ void UART0_enable(void) {
 }
 
 void UART0_disable(void) {
-  SFRPAGE = 0x00;
-
   XBR0 &= ~XBR0_URT0E__BMASK;
 }
 

@@ -27,7 +27,7 @@ void SMB0_timer2_config(void) {
 #define SMB0_SYSCLK_PERIODS (SYSCLK_FREQUENCY / (SMB0_SCL_SPEED * 3))
 #if SMB0_SYSCLK_PERIODS > 255
 #error "SMB0_SCL_SPEED is too low"
-#elif SMB0_SYSCLK_PERIODS < 8
+#elif SMB0_SYSCLK_PERIODS < 4
 #error "SMB0_SCL_SPEED is too high"
 #endif
 
@@ -134,7 +134,6 @@ SI_INTERRUPT_USING(SMB0_ISR, SMBUS0_IRQn, SMB0_REG_BANK) {
 
 void SMB0_configure(void) {
 #if SMB0_ENABLED == 1
-  SFRPAGE = 0x00;
   SMB0_config();
   SMB0_enable();
 #endif
@@ -154,8 +153,6 @@ bool SMB0_complete(void) {
 }
 
 void SMB0_transfer(byte address, byte data* request, byte request_size, byte data* response, byte max_response_size, byte data* response_size) {
-  SFRPAGE = 0x00;
-
   SMB0_complete_and_reset();
 
   SMB0_setup_address(address);
