@@ -20,26 +20,8 @@ typedef enum {
   SMB_leader_receiving,
 } SMB_state;
 
-// return true if we should acknowledge to the address with specified direction
-typedef bool (*SMB_follower_acknowledge_callback)(byte address, SMB_direction direction);
-
-// called when no more data available to send; call SMB0_write() to provide data
-typedef void (*SMB_out_of_data_to_send)(void);
-
-// return true if it should be acknowledged; call SMB0_read() to get the data
-typedef bool (*SMB_receive_acknowledge_callback)();
-
 
 /*** Configuration ***/
-
-// if not specified or NULL, all addresses matching the mask in SMB0_follow() will be automatically acknowledged
-void SMB0_SetFollowerAcknowledgeCallback(SMB_follower_acknowledge_callback callback);
-
-// if not specified or NULL, it will be skipped
-void SMB0_SetOutOfDataToSendCallback(SMB_out_of_data_to_send callback);
-
-// if not specified or NULL, all bytes will be acknowledged
-void SMB0_SetReceiveAcknowledgeCallback(SMB_receive_acknowledge_callback callback);
 
 // call to configure SMB0
 void SMB0_configure(void);
@@ -66,8 +48,6 @@ void SMB0_stop();
 /*** FOLOWER ***/
 
 // allow to be a follower on the address with the mask
-// when a matching contact occurs, SMB_follower_acknowledge_callback will be called if set
-// on every byte received SMB_acknowledge_received_callback will be called if set
 // if read buffer is not empty, automatic not acknowledged will be set, call SMB0_read_reset()
 void SMB0_follow(byte address, byte mask);
 

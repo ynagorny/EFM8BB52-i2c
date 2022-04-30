@@ -2,9 +2,10 @@
 #include <EFM8BB52/SMB0.h>
 
 #define SMB0_REG_BANK 1
+#pragma NOAREGS
 
-#define SMB0_TX_BUFFER_SIZE 16
-#define SMB0_RX_BUFFER_SIZE 16
+#define SMB0_TX_BUFFER_SIZE 8
+#define SMB0_RX_BUFFER_SIZE 8
 
 /*** Private ***/
 
@@ -57,6 +58,10 @@ bool SMB0_need_to_receive_more() {
   return _SMB0_rx_write_at < _SMB0_rx_max_write_at;
 }
 
+bool SMB0_need_to_receive_last() {
+  return _SMB0_rx_write_at + 1 == _SMB0_rx_max_write_at;
+}
+
 void SMB0_receive_byte(byte d) {
   if (_SMB0_rx_write_at < _SMB0_rx_max_write_at) {
       _SMB0_rx[_SMB0_rx_write_at++] = d;
@@ -81,6 +86,7 @@ void SMB0_timer2_config_and_start(void) {
 }
 
 void SMB0_control_config(void) {
+  SMB0ADM = SMB0ADM_EHACK__ADR_ACK_AUTOMATIC;
   SMB0CF = SMB0CF_INH__SLAVE_DISABLED | SMB0CF_SMBCS__TIMER2_LOW;
   XBR0 |= XBR0_SMB0E__ENABLED;
 }
@@ -148,10 +154,10 @@ SI_INTERRUPT_USING(SMB0_ISR, SMBUS0_IRQn, SMB0_REG_BANK) {
         }
       } else if (_SMB0_state == SMB_leader_receiving) {
         if (SMB0CN0_ACK) {
-          if (SMB0_need_to_receive_more()) {
-            SMB0CN0_ACK = 1;
-          } else {
+          if (SMB0_need_to_receive_last()) {
             SMB0CN0_ACK = 0;
+          } else {
+            SMB0CN0_ACK = 1;
           }
         } else {
           SMB0CN0_STO = 1;
@@ -167,10 +173,14 @@ SI_INTERRUPT_USING(SMB0_ISR, SMBUS0_IRQn, SMB0_REG_BANK) {
       SMB0_receive_byte(SMB0DAT);
 
       if (SMB0_need_to_receive_more()) {
-        SMB0CN0_ACK = 1;
+          if (SMB0_need_to_receive_last()) {
+            SMB0CN0_ACK = 0;
+          } else {
+            SMB0CN0_ACK = 1;
+          }
       } else {
-        SMB0CN0_STO = 1;
-        _SMB0_state = SMB_idle;
+          SMB0CN0_STO = 1;
+          _SMB0_state = SMB_idle;
       }
     } else {
       SMB0_reset();
@@ -237,7 +247,22 @@ void SMB0_stop(void) {
 
 void SMB0_write(byte d) {
   while (_SMB0_tx_write_at >= SMB0_TX_BUFFER_SIZE) { }
+  IE_EA = 0;
   _SMB0_tx[_SMB0_tx_write_at++] = d;
+  IE_EA = 1;
+}
+
+byte SMB0_read(void) {
+  byte d;
+  while (_SMB0_rx_read_at >= _SMB0_rx_write_at) { }
+  IE_EA = 0;
+  d = _SMB0_rx[_SMB0_rx_read_at++];
+  if (_SMB0_rx_read_at == _SMB0_rx_write_at) {
+      _SMB0_rx_max_write_at -= _SMB0_rx_write_at;
+      _SMB0_rx_read_at = _SMB0_rx_write_at = 0;
+  }
+  IE_EA = 1;
+  return d;
 }
 
 
